@@ -19,67 +19,49 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Check for updates
-        id: check
+      - name: Run updater
         env:
           GH_TOKEN: ${{ github.token }}
+        run: ./update.sh
+
+      - name: Check for changes
+        id: check
         run: |
-          VERSION=$(gh api repos/imputnet/helium-linux/releases/latest --jq '.tag_name')
-          CURRENT=$(grep 'version = ' package.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          PREVIOUS=$(git show HEAD:package-x86_64.nix | grep 'version = ' | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          VERSION=$(grep 'version = ' package-x86_64.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "latest=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          if [ "$VERSION" != "$CURRENT" ]; then
-            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          if git diff --quiet; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
           else
-            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            git diff
           fi
-
-      - name: Update package
-        if: steps.check.outputs.needs_update == 'true'
-        env:
-          VERSION: ${{ steps.check.outputs.latest }}
-        run: |
-          DEB_URL="https://github.com/imputnet/helium-linux/releases/download/${VERSION}/helium-bin_${VERSION}-1_amd64.deb"
-
-          HASH=$(nix-prefetch-url "$DEB_URL" 2>/dev/null)
-          SRI_HASH=$(nix hash convert --to sri --hash-algo sha256 "$HASH")
-
-          if [[ ! "$SRI_HASH" =~ ^sha256- ]]; then
-            echo "ERROR: Invalid SRI hash: $SRI_HASH"
-            exit 1
-          fi
-
-          echo "New hash: $SRI_HASH"
-
-          sed -i "s/version = \"[^\"]*\"/version = \"$VERSION\"/" package.nix
-          sed -i "s|hash = \"sha256-[^\"]*\"|hash = \"$SRI_HASH\"|" package.nix
-
-          git diff package.nix
 
       - name: Test build
-        if: steps.check.outputs.needs_update == 'true'
+        if: steps.check.outputs.updated == 'true'
         run: |
           nix build .#helium --accept-flake-config
 
       - name: Commit and push
-        if: steps.check.outputs.needs_update == 'true'
+        if: steps.check.outputs.updated == 'true'
         env:
-          VERSION: ${{ steps.check.outputs.latest }}
+          VERSION: ${{ steps.check.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.nix
+          git add package-x86_64.nix package-aarch64.nix
           git commit -m "Update helium to ${VERSION}"
           git push
 
       - name: Create Release
-        if: steps.check.outputs.needs_update == 'true'
+        if: steps.check.outputs.updated == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.check.outputs.latest }}
-          PREVIOUS: ${{ steps.check.outputs.current }}
+          VERSION: ${{ steps.check.outputs.version }}
+          PREVIOUS: ${{ steps.check.outputs.previous }}
         run: |
           gh release create "v${VERSION}" \
             --title "helium ${VERSION}" \
