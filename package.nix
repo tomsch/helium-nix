@@ -129,6 +129,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     cp -r usr/share/metainfo $out/share/ || true
 
     makeWrapper $out/opt/helium/helium-wrapper $out/bin/helium \
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libGL ]} \
       --add-flags "--ozone-platform-hint=auto" \
       --add-flags "--enable-features=WaylandWindowDecorations,WebRTCPipeWireCapturer" \
       --add-flags "--enable-wayland-ime=true"
